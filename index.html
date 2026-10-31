@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>냉장고 주류 체크</title>
-<meta name="app-build" content="1793451272">
+<meta name="app-build" content="1793454765">
 <meta name="theme-color" content="#0B6B57">
 <meta name="color-scheme" content="light dark">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -184,6 +184,10 @@ p { margin: 0; }
 .step input::placeholder { color: var(--muted); font-weight: 400; }
 .step input::-webkit-outer-spin-button, .step input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
+.bk-row { display: flex; gap: 8px; margin-top: 8px; }
+.bk-row .btn { flex: 1; }
+.bk-more summary { min-height: 44px; display: flex; align-items: center; color: var(--muted); font-size: 14px; cursor: pointer; }
+.bk-box { display: flex; flex-direction: column; gap: 10px; padding-top: 4px; }
 .fallback { width: 100%; min-height: 120px; font: 14px var(--font-body); background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
 .example { background: var(--accent-soft); border-radius: 10px; padding: 10px 12px; font-size: 13px; }
 .empty { background: var(--surface); border: 1px dashed var(--line); border-radius: 14px; padding: 20px 16px; text-align: center; color: var(--muted); }
@@ -337,6 +341,27 @@ body.typing .tabs, body.typing .dock { display: none; }
           <input class="addname" id="reset-time" type="time" value="03:00" step="60" aria-label="마감 시간" disabled>
         </div>
       </div>
+    </section>
+    <section class="card" aria-labelledby="t-bk">
+      <h2 id="t-bk">백업</h2>
+      <p class="hint">지금 목록, 총 개수, 지금 있는 개수, 마감 시간을 파일 하나로 저장하고 다시 불러올 수 있어요. 폰을 바꾸거나 앱을 다시 깔기 전에 저장해 두세요.</p>
+      <button class="btn primary wide" id="bk-save" type="button">파일로 저장</button>
+      <button class="btn wide" id="bk-share" type="button" hidden>카톡·드라이브로 보내기</button>
+      <label class="btn wide" id="bk-load" for="bk-file">파일 불러오기</label>
+      <input id="bk-file" type="file" accept=".json,application/json,text/plain" hidden>
+      <div id="bk-confirm" class="example" hidden>
+        <p id="bk-confirm-t"></p>
+        <div class="bk-row"><button class="btn primary" id="bk-yes" type="button">불러오기</button><button class="btn" id="bk-no" type="button">취소</button></div>
+      </div>
+      <details class="bk-more">
+        <summary>파일이 안 열릴 때 (글자로 복사·붙여넣기)</summary>
+        <div class="bk-box">
+          <button class="btn wide" id="bk-copy" type="button">백업 글자 복사</button>
+          <textarea class="fallback" id="bk-text" aria-label="백업 내용" placeholder="복사해 둔 백업 글자를 여기에 붙여넣으세요"></textarea>
+          <button class="btn wide" id="bk-paste" type="button">붙여넣은 내용 불러오기</button>
+        </div>
+      </details>
+      <p class="savestat" id="bk-msg" role="status"></p>
     </section>
     <p class="savestat" role="status"></p>
   </main>
@@ -1111,6 +1136,107 @@ body.typing .tabs, body.typing .dock { display: none; }
   document.addEventListener('visibilitychange', function () { if (!document.hidden) checkReset(); });
   setInterval(function () { checkReset(); if (cache.blob && Date.now() - cache.at > 300000) markDirty(); }, 30000);
 
+
+  /* ---------- 백업: 목록·개수 저장과 불러오기 ---------- */
+  var bkPending = null;
+  function bmsg(t) { $('bk-msg').textContent = t || ''; }
+  function backupData() {
+    var ids = {}, h = {}, d = {};
+    par.forEach(function (p) { ids[p.id] = 1; });
+    Object.keys(have).forEach(function (k) { if (ids[k]) h[k] = have[k]; });
+    Object.keys(done).forEach(function (k) { if (ids[k] && done[k]) d[k] = true; });
+    return { app: 'fridge-liquor-check', v: 1, savedAt: new Date().toISOString(), items: strip(), resetTime: resetTime, have: h, done: d };
+  }
+  function backupText() { return JSON.stringify(backupData(), null, 1); }
+  function backupName() {
+    var n = new Date();
+    function z(x) { return (x < 10 ? '0' : '') + x; }
+    return '냉장고-백업-' + z(n.getMonth() + 1) + z(n.getDate()) + '.json';
+  }
+  function saveBackup() {
+    var blob = new Blob([backupText()], { type: 'application/json' }), name = backupName();
+    if (dl) {
+      dl.save({ filename: name, data: blob }).then(function () { bmsg('파일로 저장했어요.'); }, function (e) {
+        if (e && e.code === 'declined') return;
+        bmsg('저장하지 못했어요. 아래 "글자로 복사"를 써 보세요.');
+      });
+      return;
+    }
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+    bmsg('파일로 저장했어요. 다운로드 폴더를 확인하세요.');
+  }
+  function shareBackup() {
+    var file = null;
+    try { file = new File([backupText()], backupName(), { type: 'application/json' }); } catch (e) {}
+    if (file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file], title: '냉장고 백업' }).catch(function (e) {
+        if (!e || e.name !== 'AbortError') bmsg('공유하지 못했어요. "파일로 저장"을 써 보세요.');
+      });
+    } else bmsg('이 화면에서는 공유할 수 없어요. "파일로 저장"을 써 보세요.');
+  }
+  function copyBackup() {
+    var t = backupText(), ta = $('bk-text');
+    function fb() { ta.value = t; ta.focus(); ta.select(); bmsg('아래 글자를 길게 눌러 복사하세요.'); }
+    try { navigator.clipboard.writeText(t).then(function () { bmsg('백업 글자를 복사했어요. 메모나 카톡에 붙여넣어 두세요.'); }, fb); } catch (e) { fb(); }
+  }
+  function parseBackup(text) {
+    var o;
+    try { o = JSON.parse(String(text).trim()); } catch (e) { return null; }
+    if (!o || typeof o !== 'object' || !Array.isArray(o.items)) return null;
+    var items = clean(o.items);
+    if (!items || !items.length) return null;
+    var h = {}, d = {}, ids = {};
+    items.forEach(function (p) { ids[p.id] = p; });
+    Object.keys(o.have || {}).forEach(function (k) {
+      var v = Number(o.have[k]);
+      if (ids[k] && isFinite(v) && v >= 0 && v <= ids[k].par) h[k] = Math.round(v);
+    });
+    Object.keys(o.done || {}).forEach(function (k) { if (ids[k] && o.done[k]) d[k] = true; });
+    return { items: items, resetTime: (typeof o.resetTime === 'string' && /^\d\d:\d\d$/.test(o.resetTime)) ? o.resetTime : '', have: h, done: d };
+  }
+  function askImport(text) {
+    var data = parseBackup(text);
+    if (!data) { bkPending = null; $('bk-confirm').hidden = true; bmsg('백업 파일이 아니에요. 이 앱에서 저장한 파일인지 확인하세요.'); return; }
+    bkPending = data;
+    $('bk-confirm-t').textContent = '목록 ' + data.items.length + '종과 지금 개수 ' + Object.keys(data.have).length + '개를 불러올까요? 지금 목록과 개수는 바뀌어요.';
+    $('bk-confirm').hidden = false;
+    bmsg('');
+  }
+  function applyImport() {
+    var d = bkPending;
+    if (!d) return;
+    par = d.items; have = d.have; done = d.done;
+    resetTime = d.resetTime;
+    if (resetTime) { stamp = latestBoundary(resetTime, Date.now()); stampTime = resetTime; }
+    parIsExample = false;
+    bkPending = null;
+    $('bk-confirm').hidden = true;
+    saveHave(); scheduleSave();
+    renderChips(); renderPar(); renderFill(); syncResetUI();
+    bmsg('불러왔어요. 목록 ' + par.length + '종');
+    flash('백업을 불러왔어요.');
+  }
+  $('bk-save').addEventListener('click', saveBackup);
+  $('bk-share').addEventListener('click', shareBackup);
+  $('bk-copy').addEventListener('click', copyBackup);
+  $('bk-yes').addEventListener('click', applyImport);
+  $('bk-no').addEventListener('click', function () { bkPending = null; $('bk-confirm').hidden = true; bmsg(''); });
+  $('bk-paste').addEventListener('click', function () { askImport($('bk-text').value); });
+  $('bk-file').addEventListener('change', function (e) {
+    var f = e.target.files && e.target.files[0];
+    if (!f) return;
+    var r = new FileReader();
+    r.onload = function () { askImport(String(r.result || '')); };
+    r.onerror = function () { bmsg('파일을 읽지 못했어요.'); };
+    r.readAsText(f);
+    e.target.value = '';
+  });
+  function syncBackupUI() { $('bk-share').hidden = !!dl || !(navigator.share && navigator.canShare); }
+
+  syncBackupUI();
   loadHave();
   renderChips();
   renderPar();
@@ -1119,7 +1245,7 @@ body.typing .tabs, body.typing .dock { display: none; }
   (function boot() {
     var c = window.claude;
     function use(n) { return c && typeof c.use === 'function' ? Promise.resolve(c.use(n)).catch(function () { return null; }) : Promise.resolve(null); }
-    use('downloads').then(function (d) { dl = d; });
+    use('downloads').then(function (d) { dl = d; syncBackupUI(); });
     use('db').then(function (d) { dbx = d; initStore(); });
   })();
 })();

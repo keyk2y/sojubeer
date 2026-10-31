@@ -1,4 +1,4 @@
-// build 1793451272
+// build 1793454765
 // 한 번 열어 두면 인터넷이 없어도 열리는 최소한의 오프라인 캐시
 var CACHE = 'fridge-v1';
 var FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
